@@ -1,0 +1,23 @@
+# Local stack: the service plus Grafana LGTM (OTLP collector, Tempo, Loki, Prometheus).
+#   docker compose up --build        # service on :8090, Grafana on :3000
+services:
+  retrieval-service:
+    build: .
+    ports:
+      - "8090:8090"
+    environment:
+      RETRIEVAL_SERVICE_ENVIRONMENT: local
+      OTEL_SERVICE_NAME: retrieval-service
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      RETRIEVAL_SERVICE_METRIC_EXPORT_INTERVAL_S: "15"
+    depends_on:
+      - otel-lgtm
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.38.1
+    ports:
+      - "3000:3000" # Grafana
+      - "4318:4318" # OTLP HTTP

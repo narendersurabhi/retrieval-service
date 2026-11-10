@@ -1,0 +1,342 @@
+# Provided contract (agent-platform ADR 0003, ADR 0005). Bump info.version on every change; a breaking change bumps
+# MAJOR and keeps the old major served. scripts/contract_check.py enforces this.
+openapi: 3.1.0
+info:
+  title: retrieval-service
+  version: 0.1.0
+  description: 'Retrieval for the agent services: an MCP search tool and an ingest API over one index,
+    with per-user access filtering and token-budgeted results.'
+security:
+- serviceBearer: []
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Liveness check (no authentication, not traced).
+      responses:
+        '200':
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+      security: []
+  /v1/search:
+    post:
+      operationId: search
+      summary: Search for the current user (the HTTP form of the MCP `search` tool).
+      description: 'Authorization comes only from `x-agent-identity`: the body has no user, tenant or
+        filter fields, so a prompt-injected agent cannot widen what it sees. Same input and output as
+        contracts/mcp/search.json.'
+      parameters:
+      - $ref: '#/components/parameters/AgentIdentity'
+      - $ref: '#/components/parameters/Deadline'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Passages the user may see, best first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+        '401':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /v1/collections/{collection}/documents/{document_id}:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    - name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    put:
+      operationId: putDocument
+      summary: Replace a document's chunks atomically for one document version (ingestion).
+      description: 'Idempotent per (document_id, version): repeating a version returns `unchanged`. A
+        version older than the stored one is a `409`. The service embeds the chunk text with its own embedding
+        model, so clients send text only.'
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentVersion'
+      responses:
+        '200':
+          description: Stored (or already stored).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentStatus'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+    get:
+      operationId: getDocument
+      summary: The stored version of a document.
+      responses:
+        '200':
+          description: Stored version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentStatus'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteDocument
+      summary: Remove a document and all its chunks from the index.
+      responses:
+        '204':
+          description: Deleted (or already absent).
+components:
+  schemas:
+    Health:
+      type: object
+      required:
+      - status
+      - version
+      - uptime_s
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+        version:
+          type: string
+        uptime_s:
+          type: number
+          minimum: 0
+    Error:
+      description: The error envelope from docs/conventions.md (agent-platform).
+      type: object
+      required:
+      - error
+      - trace_id
+      properties:
+        error:
+          type: object
+          required:
+          - type
+          - message
+          properties:
+            type:
+              type: string
+              enum:
+              - invalid_request
+              - unauthenticated
+              - forbidden
+              - not_found
+              - conflict
+              - rate_limited
+              - upstream_error
+              - unavailable
+              - timeout
+              - internal
+            message:
+              type: string
+        trace_id:
+          type: string
+          pattern: ^[0-9a-f]{32}$
+    SearchRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - query
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: What to look for, in natural language.
+        k:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 8
+          description: How many passages to return at most.
+        collection:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+          description: Optional collection to search; all permitted collections when omitted.
+    SearchResults:
+      type: object
+      required:
+      - results
+      - truncated
+      - tokens
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+            - chunk_id
+            - document_id
+            - collection
+            - score
+            - text
+            - source
+            properties:
+              chunk_id:
+                type: string
+              document_id:
+                type: string
+              collection:
+                type: string
+              score:
+                type: number
+              text:
+                type: string
+              source:
+                type: object
+                properties:
+                  title:
+                    type: string
+                  uri:
+                    type: string
+        truncated:
+          type: boolean
+        tokens:
+          type: integer
+          minimum: 0
+    Acl:
+      type: object
+      description: Who may see the document. A user matches if any list matches; an empty ACL means nobody.
+      additionalProperties: false
+      properties:
+        tenants:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        users:
+          type: array
+          items:
+            type: string
+    Chunk:
+      type: object
+      required:
+      - chunk_id
+      - order
+      - text
+      additionalProperties: false
+      properties:
+        chunk_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        order:
+          type: integer
+          minimum: 0
+        text:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Filterable string metadata (e.g. headings, page).
+    DocumentVersion:
+      type: object
+      required:
+      - version
+      - acl
+      - chunks
+      additionalProperties: false
+      properties:
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Monotonic per document (e.g. a timestamp or source revision); content hashes are
+            fine with a timestamp prefix.
+        title:
+          type: string
+        source_uri:
+          type: string
+        acl:
+          $ref: '#/components/schemas/Acl'
+        chunks:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items:
+            $ref: '#/components/schemas/Chunk'
+    DocumentStatus:
+      type: object
+      required:
+      - collection
+      - document_id
+      - version
+      - chunks
+      - status
+      properties:
+        collection:
+          type: string
+        document_id:
+          type: string
+        version:
+          type: string
+        chunks:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - indexed
+          - unchanged
+        embedding_model:
+          type: string
+  securitySchemes:
+    serviceBearer:
+      type: http
+      scheme: bearer
+      description: 'Service-to-service credential: which service is calling, not which user.'
+  parameters:
+    AgentIdentity:
+      name: x-agent-identity
+      in: header
+      required: true
+      description: Signed end-user identity (agent-platform conventions). The only source of authorization
+        for search.
+      schema:
+        type: string
+    Deadline:
+      name: x-agent-deadline
+      in: header
+      schema:
+        type: string
+        format: date-time
+  responses:
+    Error:
+      description: Error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

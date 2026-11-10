@@ -1,0 +1,9 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: 04794cd
+_src_path: gh:narendersurabhi/agent-platform
+description: 'Retrieval for the agent services: an MCP search tool and an ingest API
+    over one index, with per-user access filtering and token-budgeted results.'
+env_prefix: RETRIEVAL_SERVICE_
+package_name: retrieval_service
+port: 8090
+project_name: retrieval-service

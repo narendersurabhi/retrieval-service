@@ -1,0 +1,59 @@
+{
+  "name": "search",
+  "version": "0.1.0",
+  "description": "Search the documents the current user may see. Returns the most relevant passages with their chunk IDs and sources, for citation. Results are trimmed to a token budget; `truncated` says whether more relevant text was cut.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["query"],
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "description": "What to look for, in natural language."
+      },
+      "k": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 8,
+        "description": "How many passages to return at most."
+      },
+      "collection": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+        "description": "Optional collection to search; all permitted collections when omitted."
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["results", "truncated", "tokens"],
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["chunk_id", "document_id", "collection", "score", "text", "source"],
+          "properties": {
+            "chunk_id": {"type": "string"},
+            "document_id": {"type": "string"},
+            "collection": {"type": "string"},
+            "score": {"type": "number"},
+            "text": {"type": "string"},
+            "source": {
+              "type": "object",
+              "properties": {
+                "title": {"type": "string"},
+                "uri": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      "truncated": {"type": "boolean"},
+      "tokens": {"type": "integer", "minimum": 0}
+    }
+  }
+}
